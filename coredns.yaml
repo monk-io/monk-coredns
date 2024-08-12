@@ -1,0 +1,45 @@
+namespace: coredns
+coredns:
+  defines: runnable
+  files:
+    config:
+      container: coredns
+      path: /etc/coredns/Corefile
+      mode: 0644
+      contents: |
+        .:53 {
+          forward . 8.8.8.8 9.9.9.9
+          log
+          errors
+        }
+        
+        {{ v "zone-domain" }}:53 {
+          file /config/{{ v "zone-domain" }}.db {
+            reload 5s
+          }
+          forward . 8.8.8.8 9.9.9.9
+          log
+          errors
+        }
+  containers:
+    coredns:
+      image: coredns/coredns
+      image-tag: <- $image-tag
+      entrypoint: /coredns -conf /etc/coredns/Corefile
+      paths:
+        - <- `${config-dir}:/config`
+  variables:
+    image-tag:
+      value: latest
+      type: string
+    config-dir:
+      value: <- `${volume-path}/coredns`
+      type: string
+    zone-domain:
+      type: string
+      required: true
+  services:
+    dns:
+      container: coredns
+      protocol: UDP
+      port: 53
