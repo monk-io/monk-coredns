@@ -30,7 +30,7 @@ coredns:
         - <- `${config-dir}:/config`
   variables:
     image-tag:
-      value: latest
+      value: 1.11.3
       type: string
     config-dir:
       value: <- `${volume-path}/coredns`
