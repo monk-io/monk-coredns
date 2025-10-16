@@ -1,0 +1,223 @@
+---
+title: CoreDNS
+description: Ready-to-run CoreDNS container template you can run directly or inherit to integrate a flexible DNS server into your infrastructure.
+primary_category: networking
+tags: [coredns, dns, template, runnable, service-discovery, kubernetes]
+integration_type: template
+hosting_models: [self-hosted]
+website_url: https://coredns.io/
+docs_url: https://coredns.io/manual/toc/
+publisher: monk.io
+---
+
+## Overview
+
+This template provides a production‑ready CoreDNS instance as a Monk runnable. You can:
+
+- Run it directly to get a managed CoreDNS container with sensible defaults
+- Inherit it in your own runnable to seamlessly add a flexible, extensible DNS server to your infrastructure
+
+CoreDNS is a fast and flexible DNS server written in Go. It chains plugins to implement DNS functionality. Each plugin performs a DNS function, such as Kubernetes service discovery, Prometheus metrics, rewriting queries, or just serving from zone files.
+
+## What this template manages
+
+- CoreDNS container (`coredns/coredns` image, configurable tag)
+- DNS service on port 53 (UDP)
+- Custom CoreDNS configuration (Corefile)
+- Plugin-based DNS functionality
+- Persistent volume for zone files and configuration
+
+## Quick start (run directly)
+
+1) Load templates
+
+```bash
+monk load MANIFEST
+```
+
+2) Run CoreDNS with a custom zone domain
+
+```bash
+monk run coredns/coredns -v zone-domain=example.local
+```
+
+3) Customize configuration (recommended via inheritance)
+
+Running directly uses the defaults defined in this template's `variables`. For production use, it's recommended to inherit this runnable and customize the configuration.
+
+- Preferred: inherit and override variables as shown below.
+- Alternative: fork/clone and edit the `variables` in `coredns/coredns.yaml`, then `monk load MANIFEST` and run.
+
+Once started, CoreDNS will be available on port 53 for DNS queries. The default configuration forwards all queries to upstream DNS servers (8.8.8.8 and 9.9.9.9) and serves a custom zone from a file.
+
+## Configuration
+
+Key variables you can customize in this template:
+
+```yaml
+variables:
+  image-tag: "1.11.3"                   # CoreDNS container image tag
+  config-dir: "${monk-volume-path}/coredns"  # host path for zone files
+  zone-domain: "example.local"          # domain name for your custom zone (required)
+```
+
+Zone files are persisted under `${monk-volume-path}/coredns` on the host. Place your zone database files (e.g., `example.local.db`) in this directory.
+
+The default Corefile configuration includes:
+- A catch-all zone (`.`) that forwards queries to upstream DNS servers
+- A custom zone configured via `zone-domain` variable that serves from a zone file
+- Logging and error reporting enabled
+- 5-second reload interval for zone file changes
+
+## Use by inheritance (recommended for infrastructure)
+
+Inherit the CoreDNS runnable in your networking infrastructure:
+
+```yaml
+namespace: myapp
+dns-server:
+  defines: runnable
+  inherits: coredns/coredns
+  variables:
+    zone-domain:
+      value: myapp.local
+    image-tag:
+      value: 1.11.3
+  files:
+    zone-file:
+      container: coredns
+      path: /config/myapp.local.db
+      contents: |
+        $ORIGIN myapp.local.
+        @       3600 IN SOA sns.dns.icann.org. noc.dns.icann.org. (
+                                2023010101 ; serial
+                                7200       ; refresh
+                                3600       ; retry
+                                1209600    ; expire
+                                3600       ; minimum
+                                )
+        
+        @       IN NS    ns1.myapp.local.
+        ns1     IN A     10.0.0.1
+        api     IN A     10.0.0.10
+        db      IN A     10.0.0.11
+        web     IN A     10.0.0.12
+```
+
+For more advanced custom configurations, you can override the Corefile:
+
+```yaml
+namespace: myapp
+dns-server:
+  defines: runnable
+  inherits: coredns/coredns
+  variables:
+    zone-domain:
+      value: myapp.local
+  files:
+    corefile:
+      container: coredns
+      path: /etc/coredns/Corefile
+      contents: |
+        .:53 {
+          forward . 1.1.1.1 1.0.0.1
+          cache 30
+          log
+          errors
+        }
+        
+        myapp.local:53 {
+          file /config/myapp.local.db {
+            reload 5s
+          }
+          log
+          errors
+        }
+```
+
+Then run your infrastructure:
+
+```bash
+monk run myapp/dns-server
+```
+
+## Ports and connectivity
+
+- Service: `dns` on UDP port `53`
+- From other runnables in the same process group, use `connection-hostname("<connection-name>")` to resolve the DNS server host.
+
+## Plugins
+
+CoreDNS supports a wide range of plugins. The default configuration uses:
+- **forward**: Forwarding queries to upstream DNS servers (8.8.8.8, 9.9.9.9)
+- **file**: Serving zone data from files
+- **log**: Query logging
+- **errors**: Error logging
+
+Additional popular plugins you can enable:
+- **kubernetes**: Service discovery for Kubernetes
+- **cache**: Caching DNS responses
+- **prometheus**: Exporting metrics to Prometheus
+- **rewrite**: Rewriting queries
+- **etcd**: Backend storage in etcd
+- **loadbalance**: Load balancing with random selection
+
+## Persistence and configuration
+
+- Zone files path: `${monk-volume-path}/coredns:/config`
+- Corefile location: `/etc/coredns/Corefile` (in container)
+- You can place additional zone files in the config path and reference them in your Corefile
+
+## Zone file format
+
+Zone files follow standard DNS zone file format (RFC 1035). Example:
+
+```
+$ORIGIN example.local.
+@       3600 IN SOA ns1.example.local. admin.example.local. (
+                        2023010101 ; serial
+                        7200       ; refresh
+                        3600       ; retry
+                        1209600    ; expire
+                        3600       ; minimum
+                        )
+
+@       IN NS    ns1.example.local.
+ns1     IN A     192.168.1.1
+www     IN A     192.168.1.10
+api     IN A     192.168.1.11
+```
+
+## Related templates
+
+- See other templates in this repository for complementary services
+- Combine with monitoring tools (`prometheus-grafana/`) for observability
+- Integrate with your application stack as needed
+
+## Troubleshooting
+
+- Ensure port 53 is available and not blocked by another DNS service
+- Verify your Corefile configuration is valid (use `coredns -conf /etc/coredns/Corefile -validate` inside the container)
+- Ensure zone files exist in the config directory and have correct permissions
+- Check that `zone-domain` variable is set when running the template
+- Check logs:
+
+```bash
+monk logs -l 500 -f coredns/coredns
+```
+
+- Test DNS resolution:
+
+```bash
+dig @localhost example.local
+dig @localhost api.example.local
+```
+
+- Verify zone file syntax:
+
+```bash
+# Check if zone file is readable and properly formatted
+monk exec coredns/coredns "cat /config/example.local.db"
+```
+
+- If queries are not being answered, ensure the zone file matches the `zone-domain` variable (e.g., if `zone-domain=example.local`, the zone file should be named `example.local.db`)
